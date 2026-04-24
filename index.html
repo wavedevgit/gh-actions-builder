@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Workflow Builder</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/@mui/material@5/umd/material-ui.development.js"></script>
+<script src="https://unpkg.com/@emotion/react@11/umd/emotion-react.umd.min.js"></script>
+<script src="https://unpkg.com/@emotion/styled@11/umd/emotion-styled.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; background: #0d1117; }
+body { font-family: 'IBM Plex Sans', sans-serif; overflow: hidden; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {
+  Box, Typography, Button, IconButton, TextField, Select, MenuItem,
+  FormControl, InputLabel, Chip, Dialog, DialogTitle, DialogContent,
+  DialogActions, Divider, Switch, FormControlLabel, Tooltip, Collapse,
+  ToggleButton, ToggleButtonGroup, Paper, alpha, createTheme,
+  ThemeProvider, CssBaseline, InputAdornment, Accordion, AccordionSummary,
+  AccordionDetails, Stack, List, ListItem, ListItemButton, ListItemText,
+  ListItemIcon, Badge, Tab, Tabs
+} = MaterialUI;
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+const theme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary:   { main: '#58a6ff' },
+    secondary: { main: '#3fb950' },
+    error:     { main: '#f85149' },
+    warning:   { main: '#d29922' },
+    background:{ default: '#0d1117', paper: '#161b22' },
+    divider: '#30363d',
+    text: { primary: '#e6edf3', secondary: '#8b949e' },
+  },
+  typography: {
+    fontFamily: "'IBM Plex Sans', sans-serif",
+    h6: { fontWeight: 600, letterSpacing: '-0.01em' },
+    body2: { fontSize: '0.8125rem' },
+    caption: { fontSize: '0.6875rem', letterSpacing: '0.04em' },
+  },
+  shape: { borderRadius: 6 },
+  components: {
+    MuiPaper:         { styleOverrides: { root: { backgroundImage: 'none', border: '1px solid #30363d' } } },
+    MuiButton:        { styleOverrides: { root: { textTransform: 'none', fontWeight: 500, fontSize: '0.8125rem' } } },
+    MuiTextField:     { defaultProps: { size: 'small', variant: 'outlined' },
+                        styleOverrides: { root: { '& .MuiOutlinedInput-root': { fontSize: '0.8125rem', fontFamily: "'IBM Plex Sans',sans-serif",
+                          '& fieldset': { borderColor: '#30363d' },
+                          '&:hover fieldset': { borderColor: '#58a6ff' },
+                        }}}},
+    MuiSelect:        { defaultProps: { size: 'small' } },
+    MuiChip:          { styleOverrides: { root: { fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem' } } },
+    MuiDialog:        { styleOverrides: { paper: { border: '1px solid #30363d', backgroundImage: 'none' } } },
+    MuiDivider:       { styleOverrides: { root: { borderColor: '#30363d' } } },
+    MuiToggleButton:  { styleOverrides: { root: { textTransform: 'none', fontSize: '0.75rem', borderColor: '#30363d',
+                          '&.Mui-selected': { backgroundColor: alpha('#58a6ff', 0.15), color: '#58a6ff' }
+                        }}},
+    MuiTab: { styleOverrides: { root: { textTransform: 'none', fontSize: '0.8125rem', minHeight: 40 }}},
+    MuiAccordion: { styleOverrides: { root: { backgroundImage: 'none', border: '1px solid #30363d',
+      '&:before': { display: 'none' }, '&.Mui-expanded': { margin: 0 },
+      boxShadow: 'none', borderRadius: '6px !important' }}},
+    MuiAccordionSummary: { styleOverrides: { root: { minHeight: 44, '&.Mui-expanded': { minHeight: 44 }},
+      content: { margin: '8px 0 !important' }}},
+  },
+});
+
+// ── Data ───────────────────────────────────────────────────────────────────
+let _uid = 0;
+const nid = () => ++_uid + '';
+
+const RUNNERS = ['ubuntu-latest','ubuntu-22.04','windows-latest','macos-latest','macos-14'];
+
+const PERMISSIONS_LIST = ['contents','issues','pull-requests','packages','deployments','id-token','pages','security-events','statuses','checks','actions'];
+const PERM_VALUES = ['read','write','none'];
+
+const TRIGGER_DEFS = {
+  push:             { filters: ['branches','tags','paths'] },
+  pull_request:     { filters: ['branches','types'] },
+  schedule:         { filters: [] },
+  workflow_dispatch:{ filters: [] },
+  release:          { filters: ['types'] },
+  workflow_call:    { filters: [] },
+};
+
+// ── Step templates ─────────────────────────────────────────────────────────
+const STEP_TEMPLATES = {
+  prebuilt: [
+    {
+      id: 'checkout',
+      label: 'Checkout repo',
+      icon: '⬇',
+      description: 'actions/checkout@v4 — clone the repo',
+      build: (cfg) => ({
+        name: 'Checkout',
+        uses: 'actions/checkout@v4',
+        run: '',
+        with: cfg.fetchDepth !== '1' ? [{key:'fetch-depth',val:cfg.fetchDepth}] : [],
+      }),
+      fields: [
+        { key:'fetchDepth', label:'fetch-depth', default:'1', type:'text', hint:'0 = full history' },
+      ],
+    },
+    {
+      id: 'setup-node',
+      label: 'Setup Node.js',
+      icon: '⬡',
+      description: 'actions/setup-node@v4 — configure Node version',
+      build: (cfg) => ({
+        name: `Setup Node ${cfg.version}`,
+        uses: 'actions/setup-node@v4',
+        run: '',
+        with: [
+          {key:'node-version',val:cfg.version},
+          ...(cfg.cache ? [{key:'cache',val:cfg.cache}] : []),
+        ],
+      }),
+      fields: [
+        { key:'version', label:'Node version', default:'20', type:'text' },
+        { key:'cache', label:'Cache (npm/yarn/pnpm)', default:'npm', type:'select', options:['','npm','yarn','pnpm'] },
+      ],
+    },
+    {
+      id: 'setup-python',
+      label: 'Setup Python',
+      icon: '🐍',
+      description: 'actions/setup-python@v5',
+      build: (cfg) => ({
+        name: `Setup Python ${cfg.version}`,
+        uses: 'actions/setup-python@v5',
+        run: '',
+        with: [{key:'python-version',val:cfg.version}],
+      }),
+      fields: [
+        { key:'version', label:'Python version', default:'3.12', type:'text' },
+      ],
+    },
+    {
+      id: 'cache',
+      label: 'Cache dependencies',
+      icon: '📦',
+      description: 'actions/cache@v4',
+      build: (cfg) => ({
+        name: 'Cache',
+        uses: 'actions/cache@v4',
+        run: '',
+        with: [{key:'path',val:cfg.path},{key:'key',val:cfg.key}],
+      }),
+      fields: [
+        { key:'path', label:'Cache path', default:'~/.npm', type:'text' },
+        { key:'key', label:'Cache key', default:'${{ runner.os }}-node-${{ hashFiles(\'**/package-lock.json\') }}', type:'text' },
+      ],
+    },
+    {
+      id: 'config-git',
+      label: 'Config git identity',
+      icon: '👤',
+      description: 'Set git user.email and user.name',
+      build: (cfg) => ({
+        name: 'Configure git',
+        uses: '',
+        run: `git config user.email "${cfg.email}"\ngit config user.name "${cfg.name}"`,
+        with: [],
+      }),
+      fields: [
+        { key:'email', label:'user.email', default:'github-actions[bot]@users.noreply.github.com', type:'text' },
+        { key:'name',  label:'user.name',  default:'github-actions[bot]', type:'text' },
+      ],
+    },
+    {
+      id: 'commit-push',
+      label: 'Commit & push',
+      icon: '⬆',
+      description: 'Stage, commit, and push changes',
+      build: (cfg) => ({
+        name: 'Commit & push',
+        uses: '',
+        run: `git add ${cfg.addPath}\ngit diff --cached --quiet || git commit -m "${cfg.message}"\ngit push`,
+        with: [],
+      }),
+      fields: [
+        { key:'addPath',  label:'git add path',     default:'.', type:'text' },
+        { key:'message',  label:'Commit message',    default:'chore: automated update [skip ci]', type:'text' },
+      ],
+    },
+    {
+      id: 'upload-artifact',
+      label: 'Upload artifact',
+      icon: '📤',
+      description: 'actions/upload-artifact@v4',
+      build: (cfg) => ({
+        name: 'Upload artifact',
+        uses: 'actions/upload-artifact@v4',
+        run: '',
+        with: [{key:'name',val:cfg.name},{key:'path',val:cfg.path}],
+      }),
+      fields: [
+        { key:'name', label:'Artifact name', default:'build', type:'text' },
+        { key:'path', label:'Path', default:'dist/', type:'text' },
+      ],
+    },
+  ],
+};
+
+// ── TagInput ───────────────────────────────────────────────────────────────
+function TagInput({ value, onChange, placeholder }) {
+  const [input, setInput] = React.useState('');
+  const add = (v) => { const t = v.trim().replace(/,$/, ''); if (t && !value.includes(t)) onChange([...value, t]); };
+  const remove = (i) => onChange(value.filter((_, idx) => idx !== i));
+  return (
+    <Box sx={{ display:'flex', flexWrap:'wrap', gap:0.5, p:'6px 10px', border:'1px solid #30363d', borderRadius:1,
+      '&:focus-within': { borderColor: '#58a6ff' }, minHeight: 36, alignItems:'center', cursor:'text' }}
+      onClick={e => e.currentTarget.querySelector('input')?.focus()}>
+      {value.map((t, i) => (
+        <Chip key={i} label={t} size="small" onDelete={() => remove(i)}
+          sx={{ height: 20, fontFamily:'JetBrains Mono', fontSize:'0.7rem', bgcolor:'#21262d', '& .MuiChip-deleteIcon': { fontSize:14, color:'#8b949e', '&:hover':{color:'#f85149'} } }} />
+      ))}
+      <input value={input} placeholder={value.length ? '' : placeholder}
+        style={{ background:'transparent', border:'none', outline:'none', color:'#e6edf3', fontFamily:'IBM Plex Sans, sans-serif', fontSize:'0.8125rem', flex:1, minWidth:60 }}
+        onChange={e => setInput(e.target.value)}
+        onKeyDown={e => {
+          if ((e.key === 'Enter' || e.key === ',') && input.trim()) { e.preventDefault(); add(input); setInput(''); }
+          if (e.key === 'Backspace' && !input && value.length) remove(value.length - 1);
+        }}
+        onBlur={() => { if (input.trim()) { add(input); setInput(''); } }}
+      />
+    </Box>
+  );
+}
+
+// ── Step modal ─────────────────────────────────────────────────────────────
+function StepModal({ open, onClose, onAdd }) {
+  const [tab, setTab] = React.useState(0); // 0=prebuilt 1=action 2=run
+  const [selectedTpl, setSelectedTpl] = React.useState(null);
+  const [tplCfg, setTplCfg] = React.useState({});
+  const [customName, setCustomName] = React.useState('');
+  const [customUses, setCustomUses] = React.useState('');
+  const [customRun, setCustomRun] = React.useState('');
+  const [withParams, setWithParams] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!open) { setSelectedTpl(null); setTplCfg({}); setCustomName(''); setCustomUses(''); setCustomRun(''); setWithParams([]); }
+  }, [open]);
+
+  const selectTpl = (tpl) => {
+    setSelectedTpl(tpl);
+    const defaults = {};
+    (tpl.fields || []).forEach(f => { defaults[f.key] = f.default; });
+    setTplCfg(defaults);
+  };
+
+  const handleAdd = () => {
+    let step;
+    if (tab === 0 && selectedTpl) {
+      step = { id: nid(), ...selectedTpl.build(tplCfg) };
+    } else if (tab === 1) {
+      step = { id: nid(), name: customName || 'Action step', uses: customUses, run: '', with: withParams.filter(k=>k.key) };
+    } else {
+      step = { id: nid(), name: customName || 'Run step', uses: '', run: customRun, with: [] };
+    }
+    onAdd(step);
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
+      PaperProps={{ sx: { bgcolor:'#161b22', border:'1px solid #30363d', maxHeight:'80vh' } }}>
+      <DialogTitle sx={{ pb: 1, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <Typography variant="h6" sx={{ fontSize:'0.9375rem' }}>Add Step</Typography>
+        <IconButton size="small" onClick={onClose} sx={{ color:'#8b949e' }}>✕</IconButton>
+      </DialogTitle>
+      <Divider />
+
+      <Box sx={{ borderBottom:'1px solid #30363d', px:3 }}>
+        <Tabs value={tab} onChange={(_,v)=>setTab(v)} sx={{ minHeight:40 }}
+          TabIndicatorProps={{ style:{ backgroundColor:'#58a6ff' } }}>
+          <Tab label="Prebuilt" />
+          <Tab label="Action" />
+          <Tab label="Run" />
+        </Tabs>
+      </Box>
+
+      <DialogContent sx={{ p: 0, display:'flex', overflow:'hidden' }}>
+        {/* Prebuilt */}
+        {tab === 0 && (
+          <Box sx={{ display:'flex', width:'100%', overflow:'hidden' }}>
+            {/* Template list */}
+            <Box sx={{ width: 220, borderRight:'1px solid #30363d', overflowY:'auto', flexShrink:0 }}>
+              {STEP_TEMPLATES.prebuilt.map(tpl => (
+                <ListItemButton key={tpl.id} selected={selectedTpl?.id === tpl.id}
+                  onClick={() => selectTpl(tpl)}
+                  sx={{ py:1.5, px:2, borderBottom:'1px solid #21262d',
+                    '&.Mui-selected': { bgcolor: alpha('#58a6ff', 0.1), '&:hover':{ bgcolor: alpha('#58a6ff', 0.14) } } }}>
+                  <Box sx={{ mr:1.5, fontSize:16 }}>{tpl.icon}</Box>
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight:500, lineHeight:1.2 }}>{tpl.label}</Typography>
+                    <Typography variant="caption" sx={{ color:'#8b949e', lineHeight:1.4, display:'block', mt:0.25 }}>{tpl.description}</Typography>
+                  </Box>
+                </ListItemButton>
+              ))}
+            </Box>
+
+            {/* Template config */}
+            <Box sx={{ flex:1, p:2.5, overflowY:'auto' }}>
+              {selectedTpl ? (
+                <Stack spacing={2}>
+                  <Box>
+                    <Typography variant="caption" sx={{ color:'#8b949e', textTransform:'uppercase', letterSpacing:'0.1em' }}>Configure</Typography>
+                    <Typography variant="h6" sx={{ fontSize:'0.875rem', mt:0.5 }}>{selectedTpl.label}</Typography>
+                  </Box>
+                  {(selectedTpl.fields||[]).map(f => (
+                    <Box key={f.key}>
+                      <Typography variant="caption" sx={{ color:'#8b949e', display:'block', mb:0.5 }}>{f.label}</Typography>
+                      {f.type === 'select' ? (
+                        <FormControl fullWidth size="small">
+                          <Select value={tplCfg[f.key]??f.default} onChange={e=>setTplCfg({...tplCfg,[f.key]:e.target.value})}
+                            sx={{ fontSize:'0.8125rem', '& .MuiOutlinedInput-notchedOutline':{ borderColor:'#30363d' } }}>
+                            {f.options.map(o => <MenuItem key={o} value={o} sx={{fontSize:'0.8125rem'}}>{o||'(none)'}</MenuItem>)}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField fullWidth value={tplCfg[f.key]??f.default}
+                          onChange={e=>setTplCfg({...tplCfg,[f.key]:e.target.value})}
+                          helperText={f.hint}
+                          inputProps={{ style:{ fontFamily:'JetBrains Mono', fontSize:'0.78rem' } }} />
+                      )}
+                    </Box>
+                  ))}
+                  {/* Preview */}
+                  <Box>
+                    <Typography variant="caption" sx={{ color:'#8b949e', textTransform:'uppercase', letterSpacing:'0.1em', display:'block', mb:0.5 }}>Preview</Typography>
+                    <Box sx={{ bgcolor:'#0d1117', border:'1px solid #30363d', borderRadius:1, p:1.5, fontFamily:'JetBrains Mono', fontSize:'0.7rem', color:'#8b949e', whiteSpace:'pre-wrap', lineHeight:1.7 }}>
+                      {(() => {
+                        try {
+                          const s = selectedTpl.build(tplCfg);
+                          let out = `- name: ${s.name}\n`;
+                          if (s.uses) out += `  uses: ${s.uses}\n`;
+                          if (s.run) out += `  run: |\n    ${s.run.replace(/\n/g,'\n    ')}\n`;
+                          if (s.with?.length) { out += `  with:\n`; s.with.forEach(w => out += `    ${w.key}: ${w.val}\n`); }
+                          return out;
+                        } catch { return '...'; }
+                      })()}
+                    </Box>
+                  </Box>
+                </Stack>
+              ) : (
+                <Box sx={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100%', color:'#8b949e' }}>
+                  <Typography variant="body2">Select a template</Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        )}
+
+        {/* Action */}
+        {tab === 1 && (
+          <Stack spacing={2} sx={{ p:2.5, width:'100%' }}>
+            <TextField label="Step name" fullWidth value={customName} onChange={e=>setCustomName(e.target.value)} />
+            <TextField label="uses (e.g. actions/checkout@v4)" fullWidth value={customUses} onChange={e=>setCustomUses(e.target.value)}
+              inputProps={{ style:{fontFamily:'JetBrains Mono',fontSize:'0.78rem'} }} />
+            <Box>
+              <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', mb:1 }}>
+                <Typography variant="caption" sx={{ color:'#8b949e', textTransform:'uppercase', letterSpacing:'0.08em' }}>with params</Typography>
+                <Button size="small" onClick={()=>setWithParams([...withParams,{key:'',val:''}])} sx={{ color:'#58a6ff', fontSize:'0.75rem' }}>+ Add</Button>
+              </Box>
+              <Stack spacing={1}>
+                {withParams.map((p,i)=>(
+                  <Box key={i} sx={{ display:'flex', gap:1, alignItems:'center' }}>
+                    <TextField placeholder="key" size="small" value={p.key} onChange={e=>{const n=[...withParams];n[i].key=e.target.value;setWithParams(n)}}
+                      sx={{ flex:1 }} inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.78rem'}}} />
+                    <TextField placeholder="value" size="small" value={p.val} onChange={e=>{const n=[...withParams];n[i].val=e.target.value;setWithParams(n)}}
+                      sx={{ flex:2 }} inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.78rem'}}} />
+                    <IconButton size="small" onClick={()=>setWithParams(withParams.filter((_,idx)=>idx!==i))} sx={{ color:'#8b949e','&:hover':{color:'#f85149'} }}>✕</IconButton>
+                  </Box>
+                ))}
+              </Stack>
+            </Box>
+          </Stack>
+        )}
+
+        {/* Run */}
+        {tab === 2 && (
+          <Stack spacing={2} sx={{ p:2.5, width:'100%' }}>
+            <TextField label="Step name" fullWidth value={customName} onChange={e=>setCustomName(e.target.value)} />
+            <TextField label="Shell commands" fullWidth multiline rows={8} value={customRun} onChange={e=>setCustomRun(e.target.value)}
+              placeholder={"npm install\nnpm test\nnpm run build"}
+              inputProps={{ style:{fontFamily:'JetBrains Mono',fontSize:'0.78rem',lineHeight:1.6} }} />
+          </Stack>
+        )}
+      </DialogContent>
+
+      <Divider />
+      <DialogActions sx={{ px:2.5, py:1.5 }}>
+        <Button onClick={onClose} sx={{ color:'#8b949e' }}>Cancel</Button>
+        <Button variant="contained" onClick={handleAdd}
+          disabled={tab===0 ? !selectedTpl : tab===1 ? !customUses : !customRun}>
+          Add Step
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ── Main App ───────────────────────────────────────────────────────────────
+function App() {
+  const [wfName, setWfName] = React.useState('CI Pipeline');
+  const [triggers, setTriggers] = React.useState({
+    push:             { on:true,  branches:['main'], tags:[], paths:[] },
+    pull_request:     { on:true,  branches:['main'], types:[] },
+    schedule:         { on:false, cron:'0 0 * * *' },
+    workflow_dispatch:{ on:false },
+    release:          { on:false, types:['published'] },
+    workflow_call:    { on:false },
+  });
+  const [permissions, setPermissions] = React.useState({
+    contents: 'read',
+    'id-token': 'none',
+    packages: 'none',
+  });
+  const [permOpen, setPermOpen] = React.useState(false);
+  const [jobs, setJobs] = React.useState([{
+    id: nid(), name: 'test', runsOn: 'ubuntu-latest', customRunner: '',
+    permissions: {},
+    steps: [
+      { id:nid(), name:'Checkout', uses:'actions/checkout@v4', run:'', with:[] },
+      { id:nid(), name:'Setup Node 20', uses:'actions/setup-node@v4', run:'', with:[{key:'node-version',val:'20'},{key:'cache',val:'npm'}] },
+      { id:nid(), name:'Install & test', uses:'', run:'npm ci\nnpm test', with:[] },
+    ],
+  }]);
+  const [stepModal, setStepModal] = React.useState({ open:false, jobId:null });
+  const [editorRef, setEditorRef] = React.useState(null);
+  const editorDivRef = React.useRef(null);
+  const monacoRef = React.useRef(null);
+
+  // Monaco init
+  React.useEffect(() => {
+    if (!editorDivRef.current) return;
+    require.config({ paths: { vs:'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
+    require(['vs/editor/editor.main'], () => {
+      monaco.editor.defineTheme('gh-dark', {
+        base:'vs-dark', inherit:true,
+        rules:[
+          {token:'',foreground:'e6edf3'},
+          {token:'keyword',foreground:'58a6ff'},
+          {token:'string',foreground:'a5d6ff'},
+          {token:'number',foreground:'79c0ff'},
+          {token:'comment',foreground:'484f58'},
+          {token:'type',foreground:'7ee787'},
+        ],
+        colors:{
+          'editor.background':'#0d1117',
+          'editor.foreground':'#e6edf3',
+          'editorLineNumber.foreground':'#30363d',
+          'editorCursor.foreground':'#58a6ff',
+          'editor.selectionBackground':'#264f78',
+          'editor.lineHighlightBackground':'#161b22',
+          'editorIndentGuide.background':'#21262d',
+          'editorWidget.background':'#161b22',
+          'editorWidget.border':'#30363d',
+        }
+      });
+      const ed = monaco.editor.create(editorDivRef.current, {
+        value:'', language:'yaml', theme:'gh-dark',
+        minimap:{enabled:false}, fontSize:12.5,
+        fontFamily:"'JetBrains Mono',monospace",
+        fontLigatures:true, lineHeight:22,
+        padding:{top:16,bottom:16},
+        scrollBeyondLastLine:false,
+        renderLineHighlight:'line',
+        overviewRulerLanes:0,
+        scrollbar:{vertical:'auto',horizontal:'hidden'},
+        lineNumbers:'on', glyphMargin:false, folding:true, wordWrap:'on',
+      });
+      monacoRef.current = ed;
+    });
+    return () => monacoRef.current?.dispose();
+  }, []);
+
+  // YAML gen
+  React.useEffect(() => {
+    if (!monacoRef.current) return;
+    let y = `name: ${wfName||'workflow'}\n\non:\n`;
+    const active = Object.entries(triggers).filter(([,v])=>v.on);
+    if (!active.length) y += '  push:\n';
+    active.forEach(([k,v]) => {
+      if (k==='schedule') { y+=`  schedule:\n    - cron: '${v.cron||'0 0 * * *'}'\n`; return; }
+      const def = TRIGGER_DEFS[k];
+      const hasF = def.filters.some(f=>v[f]&&v[f].length);
+      if (!hasF) { y+=`  ${k}:\n`; return; }
+      y+=`  ${k}:\n`;
+      def.filters.forEach(f=>{
+        if (v[f]&&v[f].length) { y+=`    ${f}:\n`; v[f].forEach(b=>y+=`      - ${b}\n`); }
+      });
+    });
+    // global permissions
+    const permEntries = Object.entries(permissions).filter(([,v])=>v!=='none');
+    if (permEntries.length) {
+      y += '\npermissions:\n';
+      permEntries.forEach(([k,v]) => y+=`  ${k}: ${v}\n`);
+    }
+    if (jobs.length) {
+      y += '\njobs:\n';
+      jobs.forEach(j => {
+        const jn = (j.name||'job').replace(/\s+/g,'-').toLowerCase();
+        const runner = j.customRunner || j.runsOn;
+        y += `  ${jn}:\n    runs-on: ${runner}\n`;
+        // job-level permissions
+        const jp = Object.entries(j.permissions||{}).filter(([,v])=>v!=='none');
+        if (jp.length) { y+='    permissions:\n'; jp.forEach(([k,v])=>y+=`      ${k}: ${v}\n`); }
+        if (j.steps.length) {
+          y += '    steps:\n';
+          j.steps.forEach(s => {
+            y += `      - name: ${s.name||'step'}\n`;
+            if (s.uses) y += `        uses: ${s.uses}\n`;
+            if (s.run) {
+              const lines = s.run.trim().split('\n');
+              if (lines.length>1) y+=`        run: |\n`+lines.map(l=>`          ${l}`).join('\n')+'\n';
+              else y+=`        run: ${s.run.trim()}\n`;
+            }
+            const kvs = (s.with||[]).filter(k=>k.key);
+            if (kvs.length) { y+='        with:\n'; kvs.forEach(k=>y+=`          ${k.key}: ${k.val}\n`); }
+          });
+        }
+      });
+    }
+    const model = monacoRef.current.getModel();
+    if (model) { const pos=monacoRef.current.getScrollTop(); monacoRef.current.setValue(y); monacoRef.current.setScrollTop(pos); }
+  });
+
+  const updateTrigger = (k, field, val) => setTriggers(t => ({ ...t, [k]: { ...t[k], [field]: val } }));
+
+  const addJob = () => {
+    const id = nid();
+    setJobs(j => [...j, { id, name:`job-${j.length+1}`, runsOn:'ubuntu-latest', customRunner:'', permissions:{}, steps:[] }]);
+  };
+
+  const updateJob = (jid, field, val) => setJobs(js => js.map(j => j.id===jid ? {...j,[field]:val} : j));
+
+  const deleteJob = (jid) => setJobs(js => js.filter(j=>j.id!==jid));
+
+  const addStep = (jid, step) => setJobs(js => js.map(j => j.id===jid ? {...j, steps:[...j.steps, step]} : j));
+
+  const updateStep = (jid, sid, field, val) =>
+    setJobs(js => js.map(j => j.id!==jid ? j : { ...j, steps: j.steps.map(s => s.id!==sid ? s : {...s,[field]:val}) }));
+
+  const deleteStep = (jid, sid) =>
+    setJobs(js => js.map(j => j.id!==jid ? j : { ...j, steps: j.steps.filter(s=>s.id!==sid) }));
+
+  const updateStepWith = (jid, sid, idx, field, val) =>
+    setJobs(js => js.map(j => j.id!==jid ? j : { ...j, steps: j.steps.map(s => {
+      if (s.id!==sid) return s;
+      const w=[...s.with]; w[idx]={...w[idx],[field]:val}; return {...s,with:w};
+    })}));
+
+  const setPerm = (k,v) => setPermissions(p => {
+    const n={...p}; if(v==='none') delete n[k]; else n[k]=v; return n;
+  });
+
+  const SECTION_LABEL = ({ children, action }) => (
+    <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', mb:1.5, mt:0.5 }}>
+      <Typography variant="caption" sx={{ color:'#8b949e', textTransform:'uppercase', letterSpacing:'0.12em', fontWeight:600 }}>{children}</Typography>
+      {action}
+    </Box>
+  );
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <Box sx={{ display:'flex', height:'100vh', bgcolor:'#0d1117' }}>
+
+        {/* ── Sidebar ─────────────────────────────────── */}
+        <Box sx={{ width:360, flexShrink:0, display:'flex', flexDirection:'column', borderRight:'1px solid #30363d', bgcolor:'#0d1117', overflow:'hidden' }}>
+
+          {/* Header */}
+          <Box sx={{ px:2.5, py:1.5, borderBottom:'1px solid #30363d', display:'flex', alignItems:'center', gap:1.5, flexShrink:0 }}>
+            <Box sx={{ width:28, height:28, borderRadius:1, bgcolor:'#21262d', border:'1px solid #30363d',
+              display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, flexShrink:0 }}>⚡</Box>
+            <TextField variant="standard" value={wfName} onChange={e=>setWfName(e.target.value)}
+              inputProps={{ style:{ fontWeight:600, fontSize:'0.9375rem', fontFamily:'IBM Plex Sans', color:'#e6edf3' } }}
+              sx={{ flex:1, '& .MuiInput-underline:before':{borderBottom:'none'}, '& .MuiInput-underline:hover:before':{borderBottom:'1px solid #30363d'}, '& .MuiInput-underline:after':{borderBottomColor:'#58a6ff'} }} />
+            <Chip label="YAML" size="small" sx={{ height:20, bgcolor:'#21262d', color:'#8b949e', fontFamily:'JetBrains Mono', fontSize:'0.65rem', border:'1px solid #30363d' }} />
+          </Box>
+
+          {/* Scrollable content */}
+          <Box sx={{ flex:1, overflowY:'auto', px:2.5, py:2 }}>
+
+            {/* ── Triggers ── */}
+            <SECTION_LABEL>Triggers</SECTION_LABEL>
+            <Box sx={{ display:'flex', flexWrap:'wrap', gap:0.75, mb:2 }}>
+              {Object.keys(TRIGGER_DEFS).map(k => {
+                const on = triggers[k].on;
+                return (
+                  <Chip key={k} label={k} onClick={() => updateTrigger(k,'on',!on)} size="small"
+                    variant={on ? 'filled' : 'outlined'}
+                    sx={{ height:24, cursor:'pointer', fontFamily:'JetBrains Mono', fontSize:'0.7rem',
+                      bgcolor: on ? alpha('#3fb950', 0.15) : 'transparent',
+                      borderColor: on ? '#3fb950' : '#30363d',
+                      color: on ? '#3fb950' : '#8b949e',
+                      '&:hover':{ bgcolor: on ? alpha('#3fb950',0.2) : '#21262d' }
+                    }} />
+                );
+              })}
+            </Box>
+
+            {/* Active trigger configs */}
+            {Object.entries(TRIGGER_DEFS).map(([k, def]) => {
+              const v = triggers[k];
+              if (!v.on) return null;
+              if (k==='workflow_dispatch'||k==='workflow_call') return null;
+              return (
+                <Box key={k} sx={{ mb:1.5, pl:1.5, borderLeft:'2px solid #3fb950' }}>
+                  <Typography variant="caption" sx={{ color:'#3fb950', fontFamily:'JetBrains Mono', fontSize:'0.7rem', display:'block', mb:1 }}>{k}</Typography>
+                  {k==='schedule' ? (
+                    <TextField fullWidth label="cron" value={v.cron} onChange={e=>updateTrigger(k,'cron',e.target.value)}
+                      inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.78rem'}}} />
+                  ) : def.filters.map(f => (
+                    <Box key={f} sx={{ mb:1 }}>
+                      <Typography variant="caption" sx={{ color:'#8b949e', display:'block', mb:0.5 }}>{f}</Typography>
+                      <TagInput value={v[f]||[]} onChange={val=>updateTrigger(k,f,val)} placeholder={f==='branches'?'main, feature/*':f==='types'?'opened, reopened':f} />
+                    </Box>
+                  ))}
+                </Box>
+              );
+            })}
+
+            {/* ── Permissions ── */}
+            <Box sx={{ mt:2.5 }}>
+              <SECTION_LABEL action={
+                <Button size="small" onClick={()=>setPermOpen(p=>!p)} sx={{ color:'#58a6ff', fontSize:'0.75rem', minWidth:0 }}>
+                  {permOpen ? 'collapse' : 'edit'}
+                </Button>
+              }>Permissions</SECTION_LABEL>
+
+              {/* Active perms summary */}
+              <Box sx={{ display:'flex', flexWrap:'wrap', gap:0.5, mb: permOpen ? 1.5 : 0 }}>
+                {Object.entries(permissions).filter(([,v])=>v!=='none').map(([k,v]) => (
+                  <Chip key={k} label={`${k}: ${v}`} size="small"
+                    sx={{ height:20, bgcolor:'#21262d', color: v==='write'?'#f0883e':'#8b949e', border:'1px solid #30363d', fontFamily:'JetBrains Mono', fontSize:'0.65rem' }} />
+                ))}
+                {Object.keys(permissions).filter(k=>permissions[k]!=='none').length===0 && !permOpen &&
+                  <Typography variant="caption" sx={{ color:'#484f58' }}>none configured</Typography>}
+              </Box>
+
+              <Collapse in={permOpen}>
+                <Box sx={{ bgcolor:'#161b22', border:'1px solid #30363d', borderRadius:1, overflow:'hidden' }}>
+                  {PERMISSIONS_LIST.map((perm, i) => (
+                    <Box key={perm} sx={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+                      px:1.5, py:0.75, borderBottom: i<PERMISSIONS_LIST.length-1 ? '1px solid #21262d' : 'none' }}>
+                      <Typography variant="body2" sx={{ fontFamily:'JetBrains Mono', fontSize:'0.75rem', color:'#8b949e' }}>{perm}</Typography>
+                      <ToggleButtonGroup size="small" exclusive value={permissions[perm]||'none'}
+                        onChange={(_,v)=>{ if(v) setPerm(perm,v); }}
+                        sx={{ '& .MuiToggleButton-root': { py:0.25, px:1, fontSize:'0.65rem', fontFamily:'JetBrains Mono', color:'#484f58', borderColor:'#30363d',
+                          '&.Mui-selected':{color: permissions[perm]==='write'?'#f0883e':'#58a6ff'} } }}>
+                        {PERM_VALUES.map(v => <ToggleButton key={v} value={v}>{v}</ToggleButton>)}
+                      </ToggleButtonGroup>
+                    </Box>
+                  ))}
+                </Box>
+              </Collapse>
+            </Box>
+
+            {/* ── Jobs ── */}
+            <Box sx={{ mt:2.5 }}>
+              <SECTION_LABEL action={
+                <Button size="small" onClick={addJob} sx={{ color:'#58a6ff', fontSize:'0.75rem', minWidth:0 }}>+ Job</Button>
+              }>Jobs</SECTION_LABEL>
+
+              <Stack spacing={1}>
+                {jobs.map((job, ji) => (
+                  <JobCard key={job.id} job={job} ji={ji}
+                    onUpdate={(f,v)=>updateJob(job.id,f,v)}
+                    onDelete={()=>deleteJob(job.id)}
+                    onAddStep={()=>setStepModal({open:true,jobId:job.id})}
+                    onDeleteStep={(sid)=>deleteStep(job.id,sid)}
+                    onUpdateStep={(sid,f,v)=>updateStep(job.id,sid,f,v)}
+                    onUpdateStepWith={(sid,i,f,v)=>updateStepWith(job.id,sid,i,f,v)}
+                    onAddStepWith={(sid)=>setJobs(js=>js.map(j=>j.id!==job.id?j:{...j,steps:j.steps.map(s=>s.id!==sid?s:{...s,with:[...s.with,{key:'',val:''}]})}))}
+                    onDeleteStepWith={(sid,i)=>setJobs(js=>js.map(j=>j.id!==job.id?j:{...j,steps:j.steps.map(s=>s.id!==sid?s:{...s,with:s.with.filter((_,idx)=>idx!==i)})}))}
+                  />
+                ))}
+                {!jobs.length && (
+                  <Box sx={{ border:'1px dashed #30363d', borderRadius:1, p:3, textAlign:'center' }}>
+                    <Typography variant="body2" sx={{ color:'#484f58' }}>No jobs yet</Typography>
+                    <Button size="small" onClick={addJob} sx={{ mt:1, color:'#58a6ff' }}>+ Add job</Button>
+                  </Box>
+                )}
+              </Stack>
+            </Box>
+          </Box>
+
+          {/* Footer */}
+          <Box sx={{ px:2.5, py:1.5, borderTop:'1px solid #30363d', display:'flex', gap:1, flexShrink:0 }}>
+            <Button fullWidth variant="outlined" size="small" onClick={addJob}
+              sx={{ borderColor:'#30363d', color:'#8b949e', '&:hover':{borderColor:'#58a6ff',color:'#58a6ff'} }}>
+              + Add Job
+            </Button>
+            <Button variant="contained" size="small"
+              onClick={()=>{ const v=monacoRef.current?.getValue()||''; navigator.clipboard.writeText(v); }}
+              sx={{ whiteSpace:'nowrap', bgcolor:'#238636', '&:hover':{bgcolor:'#2ea043'} }}>
+              Copy YAML
+            </Button>
+          </Box>
+        </Box>
+
+        {/* ── Editor ──────────────────────────────────── */}
+        <Box sx={{ flex:1, display:'flex', flexDirection:'column' }}>
+          <Box sx={{ px:2, py:0, height:44, display:'flex', alignItems:'center', borderBottom:'1px solid #30363d', gap:1.5, flexShrink:0 }}>
+            <Box sx={{ width:8,height:8,borderRadius:'50%',bgcolor:'#3fb950',boxShadow:'0 0 6px #3fb950' }} />
+            <Typography variant="body2" sx={{ color:'#8b949e', fontFamily:'JetBrains Mono', fontSize:'0.75rem' }}>workflow.yml</Typography>
+          </Box>
+          <Box ref={editorDivRef} sx={{ flex:1 }} />
+        </Box>
+
+      </Box>
+
+      {/* Step modal */}
+      <StepModal open={stepModal.open} onClose={()=>setStepModal({open:false,jobId:null})}
+        onAdd={(s)=>{ if(stepModal.jobId) addStep(stepModal.jobId, s); }} />
+    </ThemeProvider>
+  );
+}
+
+// ── JobCard ────────────────────────────────────────────────────────────────
+function JobCard({ job, ji, onUpdate, onDelete, onAddStep, onDeleteStep, onUpdateStep, onUpdateStepWith, onAddStepWith, onDeleteStepWith }) {
+  const [expanded, setExpanded] = React.useState(true);
+  const JOB_COLORS = ['#58a6ff','#3fb950','#f0883e','#f85149','#a371f7','#ffa657'];
+  const color = JOB_COLORS[ji % JOB_COLORS.length];
+  const isCustomRunner = !['ubuntu-latest','ubuntu-22.04','windows-latest','macos-latest','macos-14'].includes(job.runsOn);
+
+  return (
+    <Accordion expanded={expanded} onChange={()=>setExpanded(e=>!e)} disableGutters
+      sx={{ bgcolor:'#161b22', '&.Mui-expanded': { border:'1px solid #30363d' } }}>
+      <AccordionSummary sx={{ px:1.5, minHeight:'40px !important', '& .MuiAccordionSummary-content':{alignItems:'center',gap:1, my:'8px !important'} }}>
+        <Box sx={{ width:6,height:6,borderRadius:'50%',bgcolor:color,boxShadow:`0 0 6px ${color}`,flexShrink:0 }} />
+        <TextField variant="standard" value={job.name} onChange={e=>{e.stopPropagation();onUpdate('name',e.target.value)}}
+          onClick={e=>e.stopPropagation()}
+          inputProps={{ style:{fontSize:'0.8125rem',fontWeight:500,fontFamily:'IBM Plex Sans',color:'#e6edf3'} }}
+          sx={{ flex:1, '& .MuiInput-underline:before':{borderBottom:'none'}, '& .MuiInput-underline:hover:before':{borderBottom:'1px solid #30363d'}, '& .MuiInput-underline:after':{borderBottomColor:color} }} />
+        <Typography variant="caption" sx={{ color:'#484f58', fontFamily:'JetBrains Mono', fontSize:'0.68rem', mr:0.5, flexShrink:0 }}>
+          {(job.customRunner||job.runsOn).replace('-latest','')}&nbsp;·&nbsp;{job.steps.length}s
+        </Typography>
+        <IconButton size="small" onClick={e=>{e.stopPropagation();onDelete()}} sx={{ color:'#484f58', '&:hover':{color:'#f85149'}, p:0.5, opacity:0, '.MuiAccordion-root:hover &':{opacity:1} }}>
+          <span style={{fontSize:14}}>✕</span>
+        </IconButton>
+      </AccordionSummary>
+      <AccordionDetails sx={{ p:0, borderTop:'1px solid #21262d' }}>
+        <Box sx={{ px:2, pt:1.5, pb:2 }}>
+          {/* Runner */}
+          <Typography variant="caption" sx={{ color:'#484f58', textTransform:'uppercase', letterSpacing:'0.1em', display:'block', mb:1 }}>runs-on</Typography>
+          <Box sx={{ display:'flex', gap:0.5, flexWrap:'wrap', mb:1 }}>
+            {['ubuntu-latest','ubuntu-22.04','windows-latest','macos-latest'].map(r => {
+              const label = r==='ubuntu-latest'?'ubuntu':r==='ubuntu-22.04'?'ubuntu 22':r==='windows-latest'?'windows':'macos';
+              const active = !job.customRunner && job.runsOn===r;
+              return (
+                <Chip key={r} label={label} size="small" onClick={()=>{onUpdate('runsOn',r);onUpdate('customRunner','');}}
+                  variant={active?'filled':'outlined'}
+                  sx={{ height:22, cursor:'pointer', fontFamily:'JetBrains Mono', fontSize:'0.68rem',
+                    bgcolor: active ? alpha('#58a6ff',0.15) : 'transparent',
+                    borderColor: active ? '#58a6ff' : '#30363d',
+                    color: active ? '#58a6ff' : '#8b949e' }} />
+              );
+            })}
+          </Box>
+          <TextField fullWidth placeholder="custom runner (self-hosted, ARM64…)" size="small" value={job.customRunner}
+            onChange={e=>onUpdate('customRunner',e.target.value)}
+            inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.75rem'}}}
+            sx={{ '& .MuiOutlinedInput-root':{ ...(job.customRunner ? {'& fieldset':{borderColor:'#58a6ff'}} : {}) } }} />
+
+          {/* Steps */}
+          <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', mt:2, mb:1 }}>
+            <Typography variant="caption" sx={{ color:'#484f58', textTransform:'uppercase', letterSpacing:'0.1em' }}>Steps</Typography>
+            <Button size="small" onClick={onAddStep} sx={{ color:'#58a6ff', fontSize:'0.75rem', minWidth:0 }}>+ step</Button>
+          </Box>
+
+          <Stack spacing={0.5}>
+            {job.steps.map((step, si) => (
+              <StepRow key={step.id} step={step} si={si}
+                onDelete={()=>onDeleteStep(step.id)}
+                onUpdate={(f,v)=>onUpdateStep(step.id,f,v)}
+                onUpdateWith={(i,f,v)=>onUpdateStepWith(step.id,i,f,v)}
+                onAddWith={()=>onAddStepWith(step.id)}
+                onDeleteWith={(i)=>onDeleteStepWith(step.id,i)} />
+            ))}
+            {!job.steps.length && (
+              <Box sx={{ border:'1px dashed #21262d', borderRadius:1, p:1.5, textAlign:'center' }}>
+                <Button size="small" onClick={onAddStep} sx={{ color:'#58a6ff', fontSize:'0.75rem' }}>+ Add first step</Button>
+              </Box>
+            )}
+          </Stack>
+        </Box>
+      </AccordionDetails>
+    </Accordion>
+  );
+}
+
+// ── StepRow ────────────────────────────────────────────────────────────────
+function StepRow({ step, si, onDelete, onUpdate, onUpdateWith, onAddWith, onDeleteWith }) {
+  const [open, setOpen] = React.useState(false);
+  const isAction = !!step.uses;
+
+  return (
+    <Box sx={{ border:'1px solid #21262d', borderRadius:1, overflow:'hidden',
+      borderLeft: `2px solid ${isAction ? '#58a6ff' : '#3fb950'}`, position:'relative' }}>
+      {/* Header */}
+      <Box sx={{ display:'flex', alignItems:'center', gap:0.75, px:1.25, py:0.75, cursor:'pointer', '&:hover':{bgcolor:'#21262d'} }}
+        onClick={()=>setOpen(o=>!o)}>
+        <Typography variant="caption" sx={{ color:'#484f58', fontFamily:'JetBrains Mono', width:16, textAlign:'right', flexShrink:0 }}>{si+1}</Typography>
+        <Box sx={{ width:4,height:4,borderRadius:'50%',bgcolor:isAction?'#58a6ff':'#3fb950',flexShrink:0 }} />
+        <Typography variant="body2" sx={{ flex:1, fontSize:'0.8rem', fontWeight:500 }}>{step.name}</Typography>
+        {step.uses && <Typography variant="caption" sx={{ color:'#484f58', fontFamily:'JetBrains Mono', fontSize:'0.65rem', mr:0.5 }}>{step.uses.split('/').pop()}</Typography>}
+        <IconButton size="small" onClick={e=>{e.stopPropagation();onDelete()}} sx={{ color:'#484f58', '&:hover':{color:'#f85149'}, p:0.25, opacity:0, 'div:hover > div > &':{opacity:1} }}>
+          <span style={{fontSize:12}}>✕</span>
+        </IconButton>
+        <Box sx={{ color:'#484f58', fontSize:12, transform: open?'rotate(90deg)':'none', transition:'transform .15s', lineHeight:1 }}>›</Box>
+      </Box>
+
+      {/* Expanded */}
+      <Collapse in={open}>
+        <Box sx={{ px:1.5, pb:1.5, pt:0.5, borderTop:'1px solid #21262d', bgcolor:'rgba(0,0,0,0.2)' }}>
+          <Stack spacing={1.25}>
+            <TextField label="name" fullWidth size="small" value={step.name} onChange={e=>onUpdate('name',e.target.value)} />
+
+            {/* Type toggle */}
+            <Box sx={{ display:'flex', gap:0.75 }}>
+              {['action','run'].map(t=>(
+                <Chip key={t} label={t.toUpperCase()} size="small" onClick={()=>{
+                  if(t==='action'){onUpdate('run','');if(!step.uses)onUpdate('uses','actions/checkout@v4');}
+                  else{onUpdate('uses','');}
+                }}
+                  sx={{ height:22, cursor:'pointer', fontFamily:'JetBrains Mono', fontSize:'0.68rem',
+                    bgcolor: (t==='action'?isAction:!isAction) ? alpha('#58a6ff',0.15) : 'transparent',
+                    borderColor: (t==='action'?isAction:!isAction) ? '#58a6ff' : '#30363d',
+                    color: (t==='action'?isAction:!isAction) ? '#58a6ff' : '#484f58',
+                    border:'1px solid' }} />
+              ))}
+            </Box>
+
+            {isAction ? (
+              <>
+                <TextField label="uses" fullWidth size="small" value={step.uses} onChange={e=>onUpdate('uses',e.target.value)}
+                  inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.75rem'}}} />
+                <Box>
+                  <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', mb:0.75 }}>
+                    <Typography variant="caption" sx={{ color:'#484f58', textTransform:'uppercase', letterSpacing:'0.1em' }}>with</Typography>
+                    <Button size="small" onClick={onAddWith} sx={{ color:'#58a6ff', fontSize:'0.7rem', minWidth:0 }}>+ param</Button>
+                  </Box>
+                  <Stack spacing={0.5}>
+                    {(step.with||[]).map((kv,i)=>(
+                      <Box key={i} sx={{ display:'flex', gap:0.75, alignItems:'center' }}>
+                        <TextField size="small" placeholder="key" value={kv.key} onChange={e=>onUpdateWith(i,'key',e.target.value)}
+                          sx={{ flex:1 }} inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.72rem'}}} />
+                        <TextField size="small" placeholder="value" value={kv.val} onChange={e=>onUpdateWith(i,'val',e.target.value)}
+                          sx={{ flex:2 }} inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.72rem'}}} />
+                        <IconButton size="small" onClick={()=>onDeleteWith(i)} sx={{ color:'#484f58','&:hover':{color:'#f85149'},p:0.25 }}>
+                          <span style={{fontSize:12}}>✕</span>
+                        </IconButton>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Box>
+              </>
+            ) : (
+              <TextField label="run" fullWidth multiline minRows={2} maxRows={6} value={step.run} onChange={e=>onUpdate('run',e.target.value)}
+                inputProps={{style:{fontFamily:'JetBrains Mono',fontSize:'0.75rem',lineHeight:1.6}}} />
+            )}
+          </Stack>
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
