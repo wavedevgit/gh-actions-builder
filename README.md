@@ -2,6 +2,8 @@
 
 A Simple easy-to-use github actions builder with many features - made with ai
 
+Usage: [gh-actions-builder.pages.dev](https://gh-actions-builder.pages.dev)
+
 # Features
 
 ## Workflow editing
